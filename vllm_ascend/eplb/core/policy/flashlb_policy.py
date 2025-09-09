@@ -390,7 +390,7 @@ class FlashLB(EplbPolicy):
         super().__init__(config)
         self.max_stage_window = config.max_stage_window if hasattr(config, "max_stage_window") else 32
         self.buffer_expert_layer_num = \
-            config.buffer_expert_layer_num if hasattr(config, "buffer_expert_layer_num") else 16
+            config.buffer_expert_layer_num if hasattr(config, "buffer_expert_layer_num") else 4
 
         self.threshold_ratio = config.threshold_ratio if hasattr(config, "threshold_ratio") else 1.15
 
