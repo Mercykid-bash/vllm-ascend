@@ -386,10 +386,13 @@ class FlashLB(EplbPolicy):
     par_history = defaultdict(float) 
     hotness_window = {} 
 
-    def __init__(self): 
-        self.max_stage_window = 32
-        self.buffer_expert_layer_num = 8
-        self.threshold_ratio = 1.15 
+    def __init__(self, config: DynamicConfig):
+        super().__init__(config)
+        self.max_stage_window = config.max_stage_window if hasattr(config, "max_stage_window") else 32
+        self.buffer_expert_layer_num = \
+            config.buffer_expert_layer_num if hasattr(config, "buffer_expert_layer_num") else 16
+
+        self.threshold_ratio = config.threshold_ratio if hasattr(config, "threshold_ratio") else 1.15
 
     def compute_expert_hotness(self, num_of_expert: int, deployment: np.ndarray, rank_load: np.ndarray): 
         hotness = np.zeros(num_of_expert, dtype=rank_load.dtype) 
@@ -533,37 +536,58 @@ class FlashLB(EplbPolicy):
         
         return change, priority_idx, deployment 
 
-def warmup_flashlb(): 
-    algo = FlashLB() 
+exam_config=DynamicConfig()
+exam_config.ep_worldsize=32
+exam_config.num_die_per_host=16
+algo=FlashLB(exam_config)
+def generate_layered_experts(num_layers=58, layer_shape=(32, 9), expert_min=0, expert_max=255):
+    """
+    生成满足条件的专家部署矩阵：
+    - 共 num_layers 个 layer
+    - 每个 layer 形状为 layer_shape (32,9)
+    - 每个 layer 中 expert_min~expert_max（0~255）每个专家至少出现一次
     
-    def generate_layered_experts(num_layers=58, layer_shape=(32, 9), expert_min=0, expert_max=255): 
-        expert_num = expert_max - expert_min + 1 
-        layer_total = layer_shape[0] * layer_shape[1] 
-        extra_slots = layer_total - expert_num 
+    参数：
+        num_layers: layer 数量，默认 58
+        layer_shape: 单个 layer 形状，默认 (32,9)
+        expert_min: 专家 ID 最小值，默认 0
+        expert_max: 专家 ID 最大值，默认 255
+    返回：
+        torch.Tensor: 形状为 (num_layers, layer_shape[0], layer_shape[1]) 的张量
+    """
+    # 1. 基础参数计算
+    expert_num = expert_max - expert_min + 1  # 专家总数：256（0~255）
+    layer_total = layer_shape[0] * layer_shape[1]  # 单个 layer 总元素数：32*9=288
+    extra_slots = layer_total - expert_num  # 每个 layer 需补充的随机位置数：288-256=32
+    
+    # 2. 验证可行性（总元素数必须 ≥ 专家数，否则无法覆盖所有专家）
+    assert layer_total >= expert_num, f"单个 layer 元素数 {layer_total} < 专家数 {expert_num}，无法覆盖所有专家"
+    
+    # 3. 逐个生成 layer
+    layers = []
+    for _ in range(num_layers):
+        # 3.1 生成「完整专家序列」（确保 0~255 每个专家都有）
+        full_experts = torch.arange(expert_min, expert_max + 1, dtype=torch.int64)  # shape (256,)
+        
+        # 3.2 生成「补充随机专家」（填充剩余 32 个位置，从 0~255 随机选）
+        extra_experts = torch.randint(expert_min, expert_max + 1, size=(extra_slots,), dtype=torch.int64)  # shape (32,)
+        
+        # 3.3 拼接并打乱（确保每个 layer 的专家分布随机）
+        layer_flat = torch.cat([full_experts, extra_experts], dim=0)  # shape (288,)
+        # 打乱顺序（用 randperm 生成随机索引，避免重复打乱问题）
+        shuffle_idx = torch.randperm(layer_flat.shape[0])
+        layer_shuffled = layer_flat[shuffle_idx]
+        
+        # 3.4 重塑为 layer_shape (32,9)
+        layer = layer_shuffled.reshape(layer_shape)
+        layers.append(layer)
+    
+    # 4. 堆叠所有 layer，得到最终张量
+    return torch.stack(layers, dim=0)  # shape (58,32,9)
 
-        assert layer_total >= expert_num, f"Layer elements {layer_total} < experts {expert_num}" 
+# 生成目标张量
+expert_tensor = generate_layered_experts(num_layers=58, layer_shape=(32,9))
 
-        layers = [] 
-        for _ in range(num_layers): 
-            full_experts = torch.arange(expert_min, expert_max + 1, dtype=torch.int64) 
-            extra_experts = torch.randint(expert_min, expert_max + 1, size=(extra_slots,), dtype=torch.int64) 
-            layer_flat = torch.cat([full_experts, extra_experts], dim=0) 
-            shuffle_idx = torch.randperm(layer_flat.shape[0]) 
-            layer_shuffled = layer_flat[shuffle_idx] 
-            layers.append(layer_shuffled.reshape(layer_shape)) 
-        return torch.stack(layers, dim=0) 
-
- 
-    expert_tensor = generate_layered_experts(num_layers=58, layer_shape=(32, 9)) 
-    hotness = torch.randint(1, 100, (58, 256)) 
-    physical_to_logical_map, _, _ = algo.rebalance_experts(hotness, 288, 4, 2, 32) 
-    expert_tensor = physical_to_logical_map.reshape((58, 32, 9)) 
-    for _ in range(3):
-        physical_to_logical_map, _, _ = algo.rebalance_experts(hotness, 288, 4, 2, 32, expert_tensor) 
-        expert_tensor = physical_to_logical_map.reshape((58, 32, 9)) 
-
-    FlashLB.par_history = defaultdict(float) 
-    FlashLB.hotness_window = {}
-
-# Execute warmup on import 
-warmup_flashlb()
+algo.rebalance_experts(expert_tensor,torch.randint(1, 1000, (58, 32, 9)))
+FlashLB.par_history = defaultdict(float)
+FlashLB.hotness_window = {}
