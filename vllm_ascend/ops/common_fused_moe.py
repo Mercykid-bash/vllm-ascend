@@ -159,7 +159,7 @@ class AscendFusedMoE(FusedMoE):
 
         AscendFusedMoE.moe_counter += 1
         self.moe_instance_id = AscendFusedMoE.moe_counter
-
+        self.ascend_config = get_ascend_config()
         self.global_num_experts = num_experts
         self.expert_map = None
         self.log2phy = None
