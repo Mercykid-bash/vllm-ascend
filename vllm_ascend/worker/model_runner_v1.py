@@ -1344,6 +1344,15 @@ class NPUModelRunner(GPUModelRunner):
                 hidden_states, aux_hidden_states)
         return draft_token_ids
 
+    @staticmethod
+    def get_finished_kv_transfer(
+        scheduler_output: "SchedulerOutput",
+    ) -> tuple[Optional[set[str]], Optional[set[str]]]:
+        if has_kv_transfer_group():
+            return get_kv_transfer_group().get_finished(
+                scheduler_output.finished_req_ids)
+        return None, None
+
     def _pool(
         self,
         hidden_states: torch.Tensor,
