@@ -2356,7 +2356,7 @@ class NPUModelRunner(GPUModelRunner):
                     self.mtp_instance = mtp_instance
                     model_register(mtp_instance.model, self.vllm_config)
 
-                if self.drafter.name == SpecDcodeType.EAGLE3:
+                if self.use_aux_hidden_state_outputs:
                     self.model.set_aux_hidden_state_layers(
                         self.model.get_eagle3_aux_hidden_state_layers())
 
