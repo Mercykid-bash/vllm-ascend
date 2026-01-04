@@ -55,7 +55,7 @@ def generate_global_placement(n_expert, ep_size, n_redundant):
             groups[-j] = np.append(groups[-j], (groups[-j][-1] + 1) % n_expert)
     return torch.tensor(groups, dtype=torch.int32)
 
-
+# TODO: 写死的log2phy mapping待优化
 def init_eplb_config(ascend_config, layer_id, moe_config):
     expert_map_path = ascend_config.expert_map_path
     n_experts = moe_config.num_experts
